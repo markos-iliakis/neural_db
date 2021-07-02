@@ -7,94 +7,10 @@ import numpy as np
 import stopwords
 from nltk.stem import WordNetLemmatizer
 from transformers import Trainer, TrainingArguments
-import sklearn
+from sklearn.metrics.pairwise import cosine_similarity
+import spacy
 
-
-def text_preprocess(text):
-    stop = stopwords.get_stopwords('english')
-    symbols = "!\"#$%&()*+-./:;<=>?@[\]^_`{|}~\n"
-    lemmatizer = WordNetLemmatizer()
-
-    # Make lowercase
-    text = np.char.lower(text).tolist()
-
-    # Remove stop words
-    new_text = ""
-    for word in text:
-        if word not in stop:
-            new_text = new_text + " " + word
-    text = new_text
-
-    # Remove symbols
-    for i in symbols:
-        text = np.char.replace(text, i, ' ')
-
-    # Replace apostrophe
-    text = np.char.replace(text, "'", "").tolist()
-
-    # Remove single characters
-    new_text = ""
-    for w in text:
-        if len(w) > 1:
-            new_text = new_text + " " + w
-    text = new_text
-
-    # Lemmatize words
-    new_text = ""
-    for w in text:
-        new_text = new_text + lemmatizer.lemmatize(w)
-    text = new_text
-
-    return text
-
-
-def compute_tf(word_dict, bow):
-    tf_dict = {}
-    bow_count = len(bow)
-    for word, count in word_dict.items():
-        tf_dict[word] = count / float(bow_count)
-    return tf_dict
-
-
-def compute_idf(documents):
-    import math
-    N = len(documents)
-
-    idf_dict = dict.fromkeys(documents[0].keys(), 0)
-    for document in documents:
-        for word, val in document.items():
-            if val > 0:
-                idf_dict[word] += 1
-
-    for word, val in idf_dict.items():
-        idf_dict[word] = math.log(N / float(val))
-    return idf_dict
-
-
-def tf_idf(query, fact):
-    # Preprocess text
-    bow_query = query.split(' ')
-    bow_fact = fact.split(' ')
-
-    bow_query = text_preprocess(bow_query)
-    bow_fact = text_preprocess(bow_fact)
-
-    unique_words = set(bow_query).union(set(bow_fact))
-
-    num_words_query = dict.fromkeys(unique_words, 0)
-    for w in bow_query:
-        num_words_query[w] += 1
-
-    num_words_fact = dict.fromkeys(unique_words, 0)
-    for w in bow_fact:
-        num_words_fact[w] += 1
-
-    tf_query = compute_tf(num_words_query, bow_query)
-    tf_fact = compute_tf(num_words_fact, bow_fact)
-
-    idfs = compute_idf([num_words_query, num_words_fact])
-
-    return 1
+nlp = spacy.load("en_core_web_lg")
 
 
 def load_data():
@@ -130,15 +46,20 @@ def tokenize_function(examples):
     return tokenizer(examples["query"], examples["facts"], padding="max_length", truncation=True)
 
 
-def tf_idf_sk(query, fact):
-    vectorizer = TfidfVectorizer()
-    vectors = vectorizer.fit_transform([query, fact])
-    feature_names = vectorizer.get_feature_names()
-    dense = vectors.todense()
-    denselist = dense.tolist()
-    df = pd.DataFrame(denselist, columns=feature_names)
+def tf_idf_sk(query, facts):
+    query = ' '.join([token.lemma_.lower() for token in nlp(query) if not token.is_stop and not token.is_punct])
+    n_facts = list()
+    for fact in facts:
+        n_facts.append(' '.join([token.lemma_.lower() for token in nlp(fact) if not token.is_stop and not token.is_punct]))
 
-    return df.values.sum()/df.shape[1]
+    vectorizer = TfidfVectorizer()
+    vectors = vectorizer.fit_transform([query] + n_facts)
+
+    scores = list()
+    for i in range(1, len(n_facts)+1):
+        scores.append([cosine_similarity(vectors[0], vectors[i]), n_facts[i-1]])
+
+    return scores
 
 
 if __name__ == '__main__':
